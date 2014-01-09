@@ -1,0 +1,33 @@
+{
+  "name": "beheaded",
+  "version": "0.0.1",
+  "description": "PhantomJS sugar for headless integration testing",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha"
+  },
+  "keywords": [
+    "browser",
+    "phantomjs",
+    "headless",
+    "testing",
+    "test",
+    "integration",
+    "mocha"
+  ],
+  "author": "Jerome Gravel-Niquet",
+  "license": "MIT",
+  "dependencies": {
+    "coffee-script": "~1.6.3",
+    "debug": "~0.7.4",
+    "q": "~1.0.0",
+    "lodash": "~2.4.1",
+    "phantom": "git://github.com/sgentle/phantomjs-node",
+    "async": "~0.2.9",
+    "chai": "~1.8.1"
+  },
+  "devDependencies": {
+    "mocha": "~1.16.2",
+    "express": "~3.4.7"
+  }
+}
