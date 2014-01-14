@@ -11,38 +11,31 @@ class Assert
   text: (selector, text, message)->
     (done)=>
       debug """text from "#{selector}" expected to equal "#{text}" """
-      promise = @browser.text selector, (error, textContent)->
+      @browser.text selector, (error, textContent)->
         return done(error) if error
         return done(new Error("DOM Node with selector \"#{selector}\" was not found.")) unless textContent
         try
-          assert.equal trim(textContent), text, message
+          assert.equal textContent, text, message
           done()
         catch error
           done(error)
-      return promise
 
   location: (location)->
     (done)=>
       debug "location expected to equal", location
-      result = null
-      @browser.wait (callback)=>
-        @browser.location (error, winLocation)->
-          return callback(error) if error
-          if typeof location == "regex"
-            result = location.test(winLocation.href)
-          else if typeof location == "string"
-            result = winLocation.href == location
-          else
-            for key, value of location
-              result = winLocation[key] == value
-        if result
-          callback(null, result)
+      @browser.location (error, winLocation)->
+        return done(error) if error
+        if typeof location == "regex"
+          result = location.test(winLocation.href)
+        else if typeof location == "string"
+          result = winLocation.href == location
         else
-          callback()
-      , (error, result)->
-        console.log "LOCATION WAIT CALLBACK"
-        console.log arguments
-        assert(result) unless error
+          for key, value of location
+            result = winLocation[key] == value
+      try
+        assert(result, "window.location did not match #{location}")
+        done()
+      catch error
         done(error)
 
   hasNoClass: (selector, c, callback)=>
@@ -57,9 +50,12 @@ class Assert
       debug "hasFocus expected \"#{selector}\" to have focus"
       @browser.evaluate (selector)->
         document.querySelector(selector) == document.activeElement
-      , (error, hasFocus)->
-        assert hasFocus, "expected #{selector} to have focus" unless error
-        done(error)
+      , (hasFocus)->
+        try
+          assert hasFocus, "expected #{selector} to have focus"
+          done()
+        catch error
+          done(error)
       , selector
 
   get: (url, status)->

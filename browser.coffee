@@ -4,111 +4,130 @@ assert = require("chai").assert
 Q = require("q")
 debug = require("debug")("browser")
 _ = require("lodash")
-Async = require("async")
-extensions = require("./extensions")
-{EventEmitter} = require("events")
 Assert = require("./assert")
+{EventEmitter2} = require("eventemitter2")
 
 MOUSE_EVENT_NAMES = ["mousedown", "mousemove", "mouseup", "click"]
+MAX_WAIT = 2 * 1000 # 2s
 
-class Browser extends EventEmitter
-  _network: {}
-  _pendingRequests: {}
-
+class Browser extends EventEmitter2
   @default:
     site: "http://localhost:3000"
+    driver: "phantomjs"
 
-  constructor: (@options = {})->
+  constructor: (@options = {}, @driverArgs...)->
     _.defaults(@options, Browser.default)
-    debug "creating browser with options", @options
+    debug "instantiating, with options", @options, (@driverArgs.length && @driverArgs || "")
     @assert = new Assert(@)
-    @_loading = false
-    if @options.site
-      {@hostname, @port, @protocol} = URL.parse(@options.site)
+    @Driver = require("./drivers")[@options.driver]
+    {@protocol, @hostname, @port} = URL.parse(@options.site)
+    @reset()
 
-  _phantom: (callback)->
-    return process.nextTick(callback.bind(this, @phantom)) if @phantom
-    debug "instantiating phantomjs"
-    if @options.args
-      return Phantom.create.apply(null, @options.args.concat([@_onPhantomCreation(callback)]))
-    Phantom.create(@_onPhantomCreation(callback))
+  reset: ->
+    # if @pendingRequests
+    #   for id, request of @pendingRequests
+    #     console.log request
+    #     request["abort()"]()
+    @network = {}
+    @pendingRequests = {}
+    @loading = false
+    @driverReady = false
+    @status = null
+    @redirected = false
 
-  _onPhantomCreation: (callback)=>
-    (@phantom)=>
-      callback.call(this, @phantom)
+  getDriver: (callback)->
+    debug "getDriver"
+    return process.nextTick(callback.bind(this, null, @driver)) if @driver
+    @Driver.create @driverArgs, (error, @driver)=>
+      @listenToDriver()
+      callback.call(this, error, @driver)
 
-  _sugarizePage: (callback=(->))=>
-    fns = (@evaluate.bind(this, extensions[ext]) for ext in ["bind", "click"])
-    Async.parallel fns, ->
-      debug "sugarized"
-      callback()
+  listenToDriver: ->
+    @driver.on "load:started", @_handleLoadStarted
+    @driver.on "load:finished", @_handleLoadFinished
+    @driver.on "console:message", @_handleConsole
+    @driver.on "resource:requested", @_handleRequest
+    @driver.on "resource:received", @_handleResponse
 
-  _page: (callback)->
-    return process.nextTick(callback.bind(this, null, @page)) if @page
-    debug "creating a page within phantomjs"
-    @_phantom (phantom)=>
-      debug "got phantomjs instance, creating page..."
-      phantom.createPage (@page)=>
-        debug "got page instance, setting options"
-        @_sugarizePage =>
-          debug "page sugarized"
-          @page.set "onLoadStarted", @_handleLoadStarted
-          @page.set "onLoadFinished", @_handleLoadFinished
-          @page.set "onResourceRequested", @_handleRequest
-          @page.set "onResourceReceived", @_handleResponse
-          @page.set "onConsoleMessage", @_handleConsole
-          debug "page instantiated"
-          callback(null, @page)
-  
-  _handleLoadStarted: =>
-    @_loading = true
-
-  _handleLoadFinished: =>
-    @_loading = false
-
-  _url: (url)->
+  makeUrl: (url)->
     return "#{@protocol}//#{@hostname}:#{@port}#{url}" if @options.site
     return url
 
+  visit: (url, callback)->
+    full_url = @makeUrl(url)
+    debug "visit", full_url
+    {promise, callback} = @_wrapCallback(callback)
+    @reset()
+    @getDriver (error, driver)->
+      driver.once "ready", => @driverReady = true
+      catchInitialResponse = (resp)=>
+        if resp.url == full_url
+          @status = resp.status
+          if "#{@status}".indexOf "3" == 0
+            @redirected = true
+          @removeListener "response", catchInitialResponse
+      @on "response", catchInitialResponse
+      driver.visit full_url, (error)=>
+        return callback(error) if error
+        @wait(callback)
+    return promise
+
+  wait: (callback)->
+    if !@isLoading() && !@isWaiting() && @driverIsReady()
+      setImmediate(callback)
+    else
+      _.delay =>
+        @wait(callback)
+      , 10 # delay 10 ms before retrying.
+
+  isWaiting: ->
+    @hasPendingRequests()
+
+  isLoading: ->
+    !!@loading
+
+  driverIsReady: ->
+    !!@driverReady
+
+  hasPendingRequests: ->
+    Object.keys(@pendingRequests).length
+
+  _handleLoadStarted: =>
+    @loading = true
+    debug "loading started"
+
+  _handleLoadFinished: =>
+    @loading = false
+    debug "loading finished"
+
   _handleRequest: (data, request)=>
+    request.data = data
     @emit "request", data
-    @_network[data.id] = @_pendingRequests[data.id] = data
-    debug("##{data.id}", data.method, data.url)
+    # if ext_matches = data.url.match(/\.(.+)$/)
+    #   @emit "request:#{ext_matches[1]}", data
+    @network[data.id] = @pendingRequests[data.id] = request
+    debug "##{data.id}", data.method, data.url
 
   _handleResponse: (response)=>
     @emit "response", response
-    delete @_pendingRequests[response.id]
-    for k, v of response
-      @_network[response.id][k] = v
-    debug("##{response.id}", @_network[response.id].method, response.url, "=> #{response.status}")
+    delete @pendingRequests[response.id]
+    if @network[response.id]
+      for k, v of response
+        @network[response.id].data[k] = v
+    debug "##{response.id}", response.method, response.url, "=> #{response.status || response.stage}"
 
   _handleConsole: (msg, lineNum, sourceId)->
     console.log "#{msg}"
 
-  visit: (url, callback)->
-    full_url = @_url(url)
-    debug "visit #{full_url}"
-    {promise, callback} = @_wrapCallback(callback)
-    @_page (error, page)=>
-      sugarizeBeforeFirstJS = (req)=>
-        if /\.js$/.test(req.url)
-          @_sugarizePage =>
-            debug("INJECTED BEFORE JS LOADED?")
-          @removeListener "request", sugarizeBeforeFirstJS
-      @on "request", sugarizeBeforeFirstJS
-      page.open full_url, (@status)=>
-        debug "visit #{full_url} => #{@status}"
-        callback(null)
-    return promise
+  _handleResourceError: (resError)->
+    console.log('Unable to load resource (#' + resError.id + 'URL:' + resError.url + ')')
+    console.log('Error code: ' + resError.errorCode + '. Description: ' + resError.errorString)
 
-  evaluate: (fn, callback, args...)->
-    {promise, callback} = @_wrapCallback(callback.bind(null, null))
-    @_page (error, page) =>
-      page.evaluate.apply(page, [fn, callback].concat(args || []))
-    return promise
+  _handleResourceTimeout: (request)->
+    console.log "request timeout ##{request.id}", JSON.stringify(request)
 
   text: (selector, callback)->
-    {promise, callback} = @_wrapCallback(callback)
+    debug "text", selector
     @evaluate (selector)->
       if document.documentElement
         Array.prototype.map.call(document.querySelectorAll(selector || "html"), (el)-> el.textContent)
@@ -116,30 +135,27 @@ class Browser extends EventEmitter
       else
         return ""
     , callback, selector
-    return promise
 
   _wrapCallback: (callback, timeout = 0)->
     deferred = Q.defer()
     return {
       promise: deferred.promise
       callback: (error, result)=>
-        if error
+        if error && error instanceof Error
           deferred.reject(error)
           callback(error) if callback
         else
-          setTimeout =>
-            @wait (callback)=>
-              callback(null, !@_loading && !@_isWaiting())
-            , (waitError)->
-              deferred.resolve(result)
-              callback(null, result) if callback
+          if arguments.length == 1
+            result = error
+          _.delay ->
+            deferred.resolve(result)
+            callback(null, result) if callback
           , timeout
     }
 
 
-  fill: (selector, text, callback)->
+  fill: (selector, text, cb)->
     debug "fill \"#{selector}\" with \"#{text}\""
-    {promise, callback} = @_wrapCallback(callback)
     @evaluate (selector, text)->
       field = document.querySelector(selector)
       if field
@@ -154,32 +170,46 @@ class Browser extends EventEmitter
         if field.getAttribute("name") == selector
           return field.value = text
 
-    , callback, selector, text
+    , cb, selector, text
+
+  evaluate: (timeout, fn, cb, args...)->
+    debug "evaluate"
+    if _.isFunction(timeout)
+      [timeout, fn, cb, args] = [0, timeout, fn, [cb].concat(args)]
+    if _.isFunction(cb)
+      {promise, callback} = @_wrapCallback(cb, timeout)
+    else
+      {promise, callback} = @_wrapCallback((->), timeout)
+
+    unless cb
+      args = _.compact(obj for obj in args when obj != cb)
+    
+    @getDriver (error, driver)=>
+      return callback(error) if error
+      @wait ->
+        try
+          driver.evaluate.apply(driver, [fn, callback.bind(null, null)].concat(args))
+        catch error
+          callback(error)
+
     return promise
 
   location: (callback)->
-    {promise, callback} = @_wrapCallback(callback)
+    debug "location"
     @evaluate ->
       obj = {}
-      for k, v of window.location
-        obj[k] = v
+      obj[key] = window.location[key] for key in Object.keys(window.location)
       return obj
     , callback
-    return promise
 
 
   click: (selector, callback)=>
-    {promise, callback} = @_wrapCallback(callback)
-    # @fire selector, "click", callback
-    @evaluate (selector)->
+    @evaluate 100, (selector)->
       link = document.querySelector(selector)
-      if link
-        return link.click()
+      return link.click() if link
       for link in document.querySelectorAll("body a, body button")
-        if link.textContent.trim() == selector
-          return link.click()
+        link.click() if link.textContent.trim() == selector
     , callback, selector
-    return promise
 
   pressButton: (selector, callback)=>
     debug "pressButton \"#{selector}\""
@@ -189,91 +219,100 @@ class Browser extends EventEmitter
     debug "clickLink \"#{selector}\""
     @click.apply(@, arguments)
 
-  classes: (selector, callback)=>
-    {promise, callback} = @_wrapCallback(callback)
+  classes: (selector, callback)->
     @evaluate (selector)->
       document.querySelector(selector).className.split(/\s+/)
     , callback, selector
-    return promise
 
-  wait: (fn, callback=(->), maxWait = 2000)->
-    maxTimeout = setTimeout ->
-      callback(new Error("Browser was still waiting after #{maxWait}ms"))
-    , maxWait
+  # waitFor: (criterion, callback)->
+  #   if _.isNumber(criterion)
+  #     _.delay callback.bind(this), criterion
+  #   else if _.isFunction(criterion)
+  #     maxTimeout = setTimeout ->
+  #       callback(new Error("Browser was still waiting after #{MAX_WAIT}ms"))
+  #     , MAX_WAIT
 
-    isDone = false
+  #     isDone = false
 
-    done = (error, result)->
-      # console.log "done", result, !!result
-      if isDone = !!result && !error
-        clearTimeout(maxTimeout)
-        callback(error, result)
-      return isDone
+  #     done = (error, isTrue)->
+  #       if isDone = !!isTrue && !error
+  #         clearTimeout(maxTimeout)
+  #         callback(error, isTrue)
+  #       return isDone
 
-    retry = ->
-      fn (error, result)->
-        unless done(error, result)
-          setImmediate retry
-    retry()
+  #     retry = ->
+  #       criterion (error, result)->
+  #         unless done(error, result)
+  #           setImmediate retry
+  #     retry()
 
-    return @
+  # _findRequest: (method, callback)->
+  #   requests = _.where(_.values(@_network), method: method)
+  #   _.find(requests, callback)
 
-  _findRequest: (method, callback)->
-    requests = _.where(_.values(@_network), method: method)
-    _.find(requests, callback)
+  # _hasPendingRequests: ->
+  #   Object.keys(@_pendingRequests).length
 
-  _isWaiting: ->
-    @_hasPendingRequests()
+  # _request: (method, url, status, cb)->
+  #   {promise, callback} = @_wrapCallback(cb)
+  #   @wait =>
+  #     req = @_findRequest method, (request)->
+  #       if request.url.indexOf(url) != -1
+  #         true unless status
+  #         request.status == status
+  #     if req
+  #       setImmediate callback.bind(null, null, req)
+  #     else
+  #       errorText = "Could not find request #{method} #{url}"
+  #       errorText += " with status #{status}" if status
+  #       setImmediate callback.bind(null, new Error(errorText))
+  #   return promise
 
-  _hasPendingRequests: ->
-    Object.keys(@_pendingRequests).length
-
-  _request: (method, url, status, callback)->
+  deleteCookies: (callback)->
+    debug "delete all cookies"
     {promise, callback} = @_wrapCallback(callback)
-    @wait (done)=>
-      req = @_findRequest method, (request)->
-        if request.url.indexOf(url) != -1
-          true unless status
-          request.status == status
-      if req
-        setImmediate done.bind(null, null, req)
-      else
-        setImmediate done
-    , callback
+    if @driver
+      @wait => @driver.deleteCookies(callback)
+    else
+      setImmediate(callback)
     return promise
 
-  deleteCookies: (done)->
-    @_phantom (phantom)->
-      phantom.clearCookies(done)
+  # fire: (selector, eventName, callback)->
+  #   unless @page
+  #     throw new Error("No page open")
+  #   if ~MOUSE_EVENT_NAMES.indexOf(eventName)
+  #     eventType = "MouseEvents"
+  #   else
+  #     eventType = "HTMLEvents"
+  #   @evaluate (selector, eventName, eventType)->
+  #     target = document.querySelector(selector)
+  #     unless target && target.dispatchEvent
+  #       throw new Error("No target element (note: call with selector/element, event name and callback)")
 
-  fire: (selector, eventName, callback)->
-    unless @page
-      throw new Error("No page open")
-    if ~MOUSE_EVENT_NAMES.indexOf(eventName)
-      eventType = "MouseEvents"
+  #     event = document.createEvent(eventType)
+  #     if eventType == "MouseEvents"
+  #       event.initMouseEvent(
+  #         eventName,
+  #         true, # bubble
+  #         true, # cancelable
+  #         window, null,
+  #         0, 0, 0, 0, # coordinates
+  #         false, false, false, false, # modifier keys
+  #         0, # button=left
+  #         null
+  #       )
+  #     else
+  #       event.initEvent(eventName, true, true)
+  #     target.dispatchEvent(event)
+
+  #   , callback, selector, eventName, eventType
+
+  destroy: (callback)->
+    debug "destroy"
+    if @driver
+      @driver.destroy(callback)
     else
-      eventType = "HTMLEvents"
-    @evaluate (selector, eventName, eventType)->
-      target = document.querySelector(selector)
-      unless target && target.dispatchEvent
-        throw new Error("No target element (note: call with selector/element, event name and callback)")
-
-      event = document.createEvent(eventType)
-      if eventType == "MouseEvents"
-        event.initMouseEvent(
-          eventName,
-          true, # bubble
-          true, # cancelable
-          window, null,
-          0, 0, 0, 0, # coordinates
-          false, false, false, false, # modifier keys
-          0, # button=left
-          null
-        )
-      else
-        event.initEvent(eventName, true, true)
-      target.dispatchEvent(event)
-
-    , callback, selector, eventName, eventType
+      setImmediate(callback)
+    delete @driver
 
 module.exports = Browser

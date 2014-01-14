@@ -24,10 +24,13 @@
     "lodash": "~2.4.1",
     "phantom": "git://github.com/sgentle/phantomjs-node",
     "async": "~0.2.9",
-    "chai": "~1.8.1"
+    "chai": "~1.8.1",
+    "eventemitter2": "~0.4.13"
   },
   "devDependencies": {
     "mocha": "~1.16.2",
-    "express": "~3.4.7"
+    "express": "~3.4.7",
+    "mocha-as-promised": "~2.0.0",
+    "chai-as-promised": "~4.1.0"
   }
 }

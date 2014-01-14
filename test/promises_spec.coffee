@@ -2,17 +2,16 @@
 
 describe "Promises", ->
 
-  browser = new Browser()
-  before (done)->
-    server.ready(done)
-
+  browser = null
+  before ->
+    browser = new Browser()
+  before server.ready
 
   before ->
     server.get "/promises", (req, res)->
       res.send """
       <script>document.title = "Loaded"</script>
       """
-
 
   # The simplest promise looks like this:
   #
@@ -27,9 +26,11 @@ describe "Promises", ->
     before (done)->
       browser.visit("/promises")
         .then(done, done)
+      return
 
-    it "should resolve when page is done loading",
-      browser.assert.text "title", "Loaded"
+    it "should resolve when page is done loading", ->
+      assert.becomes browser.text("title"), "Loaded"
+      # browser.text("title").then(-> assert.equal(text, "Loaded")).fail(done)
 
 
     # You can chain multiple promises together, each one is used to
@@ -116,17 +117,18 @@ describe "Promises", ->
   #
   # If an error doesn't happen, we call done with a value and that would fail
   # the test.
-  describe "chained", ->
-    before (done)->
-      browser.visit("/promises")
-        .then ->
-          browser.assert.text "title", "Ooops", "Assertion haz a fail"
-        .then ->
-          browser.assert.text "title", "Ooops", "I'm here against all odds"
-        .then ->
-          browser.assert.text "title", "Ooops", "I'm here against all odds"
-        .fail (@error)=>
-          done()
+  # describe "chained", ->
+  #   before (done)->
+  #     browser.visit("/promises")
+  #       .then(browser.assert.text "title", "Ooops", "Assertion haz a fail")
+  #       .then(browser.assert.text "title", "Ooops", "I'm here against all odds")
+  #       .then(browser.assert.text "title", "Ooops", "I'm here against all odds")
+  #       .fail (@error)=>
+  #         console.log "failed"
+  #         done()
 
-    it "should reject with an error", ->
-      assert.equal @error.message, "Assertion haz a fail"
+  #   it "should reject with an error", ->
+  #     assert.equal @error.message, "Assertion haz a fail"
+
+  after (done)->
+    browser.destroy(done)
