@@ -22,11 +22,7 @@ Feel free to look at the [tests](https://github.com/MongoHQ/beheaded/blob/master
 ```javascript
 var Browser = require("beheaded");
 var server = require("./helpers/server"); // You probably need some server to test.
-var Chai = require("chai");
-Chai.use(require("chai-as-promised"));
-var assert = Chai.assert;
-
-require("mocha-as-promised")();
+var assert = require("assert")
 
 describe("Browser", function(){
 
@@ -37,8 +33,8 @@ describe("Browser", function(){
   before(server.ready);
 
   describe("visit", function(){
-    before(function(){
-      browser.visit "/"
+    before(function(done){
+      browser.visit("/", done)
     });
 
     // The browser instance holds the current page's status
@@ -46,10 +42,12 @@ describe("Browser", function(){
       assert.equal(200, browser.status);
     });
 
-    // `browser.location` returns a promise, use `assert.eventually`
-    // from chai-as-promised to test that out.
-    it("is on the correct page", function(){
-      assert.eventually.propertyVal(browser.location(), "href", "http://localhost:3001/");
+    // `browser.location` returns a promise, everything is async
+    it("is on the correct page", function(done){
+      browser.location().then(function(location){
+        assert.equal(location.href, "http://localhost:3001/");
+        done();
+      }).fail(done);
     });
   });
 });
