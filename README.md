@@ -1,5 +1,7 @@
 # Beheaded
 
+![Travis CI](https://travis-ci.org/MongoHQ/beheaded.png)
+
 ## What is it?
 
 Headless browser testing tool for node.js using PhantomJS.

@@ -54,6 +54,10 @@ class Page extends EventEmitter2
     debug "open", arguments[0]
     @page.open.apply(@page, arguments)
 
+  close: ->
+    debug "close", arguments[0]
+    @page.close.apply(@page, arguments)
+
   evaluate: ->
     debug "evaluate"
     @page.evaluate.apply(@page, arguments)

@@ -4,16 +4,21 @@ Page = require("./page")
 {EventEmitter2} = require("eventemitter2")
 _ = require("lodash")
 
+global_phantom = null
+
 class PhantomJS extends EventEmitter2
   constructor: (@phantom)->
     debug "constructed"
 
   @create: (driverArgs, callback)->
     debug "creating", callback.toString()
+    if global_phantom
+      return new PhantomJS(global_phantom).createPage(callback)
     try
       Phantom.create.apply null, driverArgs.concat([
         (phantom)=>
           debug "created phantom process"
+          global_phantom = phantom
           new PhantomJS(phantom).createPage(callback)
       ])
     catch error
@@ -64,7 +69,9 @@ class PhantomJS extends EventEmitter2
 
   destroy: (callback)->
     debug "destroy"
-    @phantom.exit()
-    _.delay callback, 100
+    if @page
+      @page.close()
+      delete @page
+    setImmediate(callback)
 
 module.exports = PhantomJS
