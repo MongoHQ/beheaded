@@ -1,7 +1,6 @@
 module.exports = function(){
   if (!HTMLElement.prototype.click) {
     HTMLElement.prototype.click = function() {
-      console.log("clicking...")
       var ev = document.createEvent('MouseEvent');
       ev.initMouseEvent(
           'click',
@@ -11,7 +10,6 @@ module.exports = function(){
           false, false, false, false, /*modifier keys*/
           0/*button=left*/, null
       );
-      console.log("clicked!");
       this.dispatchEvent(ev);
     }
   }

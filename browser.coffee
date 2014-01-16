@@ -204,7 +204,7 @@ class Browser extends EventEmitter2
 
 
   click: (selector, callback)=>
-    @evaluate 100, (selector)->
+    @evaluate 200, (selector)->
       link = document.querySelector(selector)
       return link.click() if link
       for link in document.querySelectorAll("body a, body button")
