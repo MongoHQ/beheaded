@@ -114,7 +114,7 @@ class Browser extends EventEmitter2
     if @network[response.id]
       for k, v of response
         @network[response.id].data[k] = v
-    debug "##{response.id}", response.method, response.url, "=> #{response.status || response.stage}"
+    debug "##{response.id}", response.data && response.data.method || "N/A", response.url, "=> #{response.status || response.stage}"
 
   _handleConsole: (msg, lineNum, sourceId)->
     console.log "#{msg}"
@@ -136,7 +136,7 @@ class Browser extends EventEmitter2
         return ""
     , callback, selector
 
-  _wrapCallback: (callback, timeout = 0)->
+  _wrapCallback: (callback, timeout = 1)->
     deferred = Q.defer()
     return {
       promise: deferred.promise
@@ -175,22 +175,24 @@ class Browser extends EventEmitter2
   evaluate: (timeout, fn, cb, args...)->
     debug "evaluate"
     if _.isFunction(timeout)
-      [timeout, fn, cb, args] = [0, timeout, fn, [cb].concat(args)]
+      [timeout, fn, cb, args] = [1, timeout, fn, [cb].concat(args)]
     if _.isFunction(cb)
-      {promise, callback} = @_wrapCallback(cb, timeout)
+      {promise, callback} = @_wrapCallback(cb)
     else
-      {promise, callback} = @_wrapCallback((->), timeout)
+      {promise, callback} = @_wrapCallback((->))
 
     unless cb
       args = _.compact(obj for obj in args when obj != cb)
     
     @getDriver (error, driver)=>
       return callback(error) if error
-      @wait ->
-        try
-          driver.evaluate.apply(driver, [fn, callback.bind(null, null)].concat(args))
-        catch error
-          callback(error)
+      _.delay =>
+        @wait ->
+          try
+            driver.evaluate.apply(driver, [fn, callback.bind(null, null)].concat(args))
+          catch error
+            callback(error)
+      , timeout
 
     return promise
 
@@ -204,7 +206,7 @@ class Browser extends EventEmitter2
 
 
   click: (selector, callback)=>
-    @evaluate 200, (selector)->
+    @evaluate 50, (selector)->
       link = document.querySelector(selector)
       return link.click() if link
       for link in document.querySelectorAll("body a, body button")
