@@ -136,6 +136,23 @@ class Browser extends EventEmitter2
         return ""
     , callback, selector
 
+  value: (selector, callback)->
+    debug "value", selector
+    @evaluate (selector)->
+      field = document.querySelector(selector)
+      if field
+        if field.isContentEditable
+          return field.innerHTML
+        else
+          return field.value
+      
+      # Use field name (case sensitive).
+      for field in document.querySelectorAll("input[name],textarea[name],select[name]")
+        if field.getAttribute("name") == selector
+          return field.value
+    
+    , callback, selector
+
   _wrapCallback: (callback, timeout = 1)->
     deferred = Q.defer()
     return {
@@ -177,22 +194,20 @@ class Browser extends EventEmitter2
     if _.isFunction(timeout)
       [timeout, fn, cb, args] = [1, timeout, fn, [cb].concat(args)]
     if _.isFunction(cb)
-      {promise, callback} = @_wrapCallback(cb)
+      {promise, callback} = @_wrapCallback(cb, timeout)
     else
-      {promise, callback} = @_wrapCallback((->))
+      {promise, callback} = @_wrapCallback((->), timeout)
 
     unless cb
       args = _.compact(obj for obj in args when obj != cb)
     
     @getDriver (error, driver)=>
       return callback(error) if error
-      _.delay =>
-        @wait ->
-          try
-            driver.evaluate.apply(driver, [fn, callback.bind(null, null)].concat(args))
-          catch error
-            callback(error)
-      , timeout
+      @wait ->
+        try
+          driver.evaluate.apply(driver, [fn, callback.bind(null, null)].concat(args))
+        catch error
+          callback(error)
 
     return promise
 
