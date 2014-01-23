@@ -30,7 +30,6 @@ class Page extends EventEmitter2
     @reset()
     @on "initialized", @shim
     @on "url:changed", @reset
-    # @on "error", (error)-> throw error
     debug "instantiated"
 
   emit: (name, args...)->
@@ -60,6 +59,9 @@ class Page extends EventEmitter2
 
   evaluate: ->
     debug "evaluate"
-    @page.evaluate.apply(@page, arguments)
+    try
+      @page.evaluate.apply(@page, arguments)
+    catch error
+      @emit "error", error
 
 module.exports = Page
